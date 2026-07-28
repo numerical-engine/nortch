@@ -1,1 +1,1 @@
-from notorch.fno import FNO1d
+from notorch.fno import FNO1D, FNO2D, FNO3D
