@@ -1,0 +1,1 @@
+from notorch.fno import FNO1d
