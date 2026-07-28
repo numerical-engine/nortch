@@ -10,6 +10,7 @@ class FNO1D(nn.Module):
         * pad_size (int): パディングサイズ。非周期性対策のために、特徴量ベクトルと位置座標を結合する前にパディングを行う。
         * conv_lift (nn.Conv1d): 1D畳み込み層。特徴量ベクトルを変換する。
         * conv_wave (nn.Conv1d): 1D畳み込み層。フーリエ空間での畳み込みを行う。
+        * num_modes (int): フーリエ空間での畳み込みに使用するモード数。0の場合は全てのモードを使用する。
     
     Methods:
         * pad(z:torch.Tensor, r:torch.Tensor)->torch.Tensor: 非周期性対策のために、特徴量ベクトルと位置座標を結合する前にパディングを行う。
@@ -17,9 +18,10 @@ class FNO1D(nn.Module):
         * 位置座標は等間隔かつr[:,0,0] < r[:,0,1] < ... < r[:,0,-1]であることを仮定している。
         * 各特徴量は同じ位置座標に対応していることを仮定している。
     """
-    def __init__(self, in_features:int, out_features:int, pad_size:int)->None:
+    def __init__(self, in_features:int, out_features:int, pad_size:int, num_modes:int = 0)->None:
         super().__init__()
         self.pad_size = pad_size
+        self.num_modes = num_modes
         self.conv_lift = nn.Conv1d(in_features + 1, out_features, kernel_size=1)
         self.conv_wave = nn.Conv1d(in_features + 1, out_features, kernel_size=1, dtype = torch.cfloat)
     def forward(self, z:torch.Tensor, r:torch.Tensor)->torch.Tensor:
@@ -36,7 +38,14 @@ class FNO1D(nn.Module):
         z_space = self.conv_lift(z)  # 1D畳み込みで特徴量を変換
 
         z_wave = torch.fft.fft(z, dim = -1)  # フーリエ変換
-        z_wave = self.conv_wave(z_wave)  # フーリエ空間での畳み込み
+        if self.num_modes != 0:
+            z_low_pass_filter = torch.zeros_like(z_wave)
+            z_low_pass_filter[:, :, :self.num_modes] = z_wave[:, :, :self.num_modes]
+            z_low_pass_filter[:, :, -self.num_modes:] = z_wave[:, :, -self.num_modes:]
+
+            z_wave = self.conv_wave(z_low_pass_filter)  # フーリエ空間での畳み込み
+        else:
+            z_wave = self.conv_wave(z_wave)  # フーリエ空間での畳み込み
         z_wave = torch.fft.ifft(z_wave, dim=-1).real  # 逆フーリエ変換
 
         z = z_space + z_wave  # 空間特徴量とフーリエ特徴量を結合
@@ -83,6 +92,7 @@ class FNO2D(nn.Module):
         * pad_size (int): パディングサイズ。非周期性対策のために、特徴量ベクトルと位置座標を結合する前にパディングを行う。
         * conv_lift (nn.Conv2d): 2D畳み込み層。特徴量ベクトルを変換する。
         * conv_wave (nn.Conv2d): 2D畳み込み層。フーリエ空間での畳み込みを行う。
+        * num_modes (int|tuple[int,int]): フーリエ空間での畳み込みに使用するモード数。0の場合は全てのモードを使用する。
     
     Methods:
         * pad(z:torch.Tensor, r:torch.Tensor)->torch.Tensor: 非周期性対策のために、特徴量ベクトルと位置座標を結合する前にパディングを行う。
@@ -90,9 +100,10 @@ class FNO2D(nn.Module):
         * 位置座標は等間隔かつr[:,0,0,:] < r[:,0,1,:] < ... < r[:,0,-1,:]ならびにr[:,1,:,0] < r[:,1,:,1] < ... < r[:,1,:,-1]であることを仮定している。
         * 各特徴量は同じ位置座標に対応していることを仮定している。
     """
-    def __init__(self, in_features:int, out_features:int, pad_size:int)->None:
+    def __init__(self, in_features:int, out_features:int, pad_size:int, num_modes:tuple[int,int] = (0,0))->None:
         super().__init__()
         self.pad_size = pad_size
+        self.num_modes = num_modes
         self.conv_lift = nn.Conv2d(in_features + 2, out_features, kernel_size=1)
         self.conv_wave = nn.Conv2d(in_features + 2, out_features, kernel_size=1, dtype = torch.cfloat)
     def forward(self, z:torch.Tensor, r:torch.Tensor)->torch.Tensor:
@@ -107,9 +118,19 @@ class FNO2D(nn.Module):
         z = self.pad(z, r)  # パディングを行う
 
         z_space = self.conv_lift(z)
-
         z_wave = torch.fft.fft2(z)
-        z_wave = self.conv_wave(z_wave)
+        if self.num_modes != (0, 0):
+            z_low_pass_filter = torch.zeros_like(z_wave)
+
+            if self.num_modes[0] != 0:
+                z_low_pass_filter[:, :, :self.num_modes[0],:] = z_wave[:, :, :self.num_modes[0],:]
+                z_low_pass_filter[:, :, -self.num_modes[0]:,:] = z_wave[:, :, -self.num_modes[0]:,:]
+            if self.num_modes[1] != 0:
+                z_low_pass_filter[:, :, :, :self.num_modes[1]] = z_wave[:, :, :, :self.num_modes[1]]
+                z_low_pass_filter[:, :, :, -self.num_modes[1]:] = z_wave[:, :, :, -self.num_modes[1]:]
+            z_wave = self.conv_wave(z_low_pass_filter)
+        else:
+            z_wave = self.conv_wave(z_wave)
         z_wave = torch.fft.ifft2(z_wave).real
 
         z = z_space + z_wave
@@ -177,6 +198,7 @@ class FNO3D(nn.Module):
         * pad_size (int): パディングサイズ。非周期性対策のために、特徴量ベクトルと位置座標を結合する前にパディングを行う。
         * conv_lift (nn.Conv3d): 3D畳み込み層。特徴量ベクトルを変換する。
         * conv_wave (nn.Conv3d): 3D畳み込み層。フーリエ空間での畳み込みを行う。
+        * num_modes (int|tuple[int,int,int]): フーリエ空間での畳み込みに使用するモード数。0の場合は全てのモードを使用する。
     
     Methods:
         * pad(z:torch.Tensor, r:torch.Tensor)->torch.Tensor: 非周期性対策のために、特徴量ベクトルと位置座標を結合する前にパディングを行う。
@@ -184,7 +206,7 @@ class FNO3D(nn.Module):
         * 位置座標は等間隔かつr[:,0,0,:,:] < r[:,0,1,:,:] < ... < r[:,0,-1,:,:]ならびにr[:,1,:,0,:] < r[:,1,:,1,:] < ... < r[:,1,:,-1,:]ならびにr[:,2,:,:,0] < r[:,2,:,:,1] < ... < r[:,2,:,:,-1]であることを仮定している。
         * 各特徴量は同じ位置座標に対応していることを仮定している。
     """
-    def __init__(self, in_features:int, out_features:int, pad_size:int)->None:
+    def __init__(self, in_features:int, out_features:int, pad_size:int, num_modes:tuple[int,int,int] = (0,0,0))->None:
         super().__init__()
         self.pad_size = pad_size
         self.conv_lift = nn.Conv3d(in_features + 3, out_features, kernel_size=1)
@@ -204,7 +226,20 @@ class FNO3D(nn.Module):
         z_space = self.conv_lift(z)
 
         z_wave = torch.fft.fftn(z, dim=(-3, -2, -1))
-        z_wave = self.conv_wave(z_wave)
+        if self.num_modes != (0, 0, 0):
+            z_low_pass_filter = torch.zeros_like(z_wave)
+            if self.num_modes[0] != 0:
+                z_low_pass_filter[:, :, :self.num_modes[0], :, :] = z_wave[:, :, :self.num_modes[0], :, :]
+                z_low_pass_filter[:, :, -self.num_modes[0]:, :, :] = z_wave[:, :, -self.num_modes[0]:, :, :]
+            if self.num_modes[1] != 0:
+                z_low_pass_filter[:, :, :, :self.num_modes[1], :] = z_wave[:, :, :, :self.num_modes[1], :]
+                z_low_pass_filter[:, :, :, -self.num_modes[1]:, :] = z_wave[:, :, :, -self.num_modes[1]:, :]
+            if self.num_modes[2] != 0:
+                z_low_pass_filter[:, :, :, :, :self.num_modes[2]] = z_wave[:, :, :, :, :self.num_modes[2]]
+                z_low_pass_filter[:, :, :, :, -self.num_modes[2]:] = z_wave[:, :, :, :, -self.num_modes[2]:]
+            z_wave = self.conv_wave(z_low_pass_filter)
+        else:
+            z_wave = self.conv_wave(z_wave)
         z_wave = torch.fft.ifftn(z_wave, dim=(-3, -2, -1)).real
 
         z = z_space + z_wave
